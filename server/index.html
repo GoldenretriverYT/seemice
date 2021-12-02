@@ -1,0 +1,201 @@
+<head>
+    <title>Epic Share Mouse</title>
+    <script src="socketio.js"></script>
+    <style>
+        * {
+            font-family: Arial;
+        }
+
+        body {
+            margin: 0px;
+            overflow: hidden;
+            cursor: none;
+        }
+
+        canvas {
+            cursor: none;
+        }
+
+        .cmOpt {
+            color: white;
+            width: 200px;
+            height: auto;
+            border-radius: 5px;
+            background-color: #414040;
+        }
+
+        .cmOpt+.cmOpt {
+            margin-top: 5px;
+        }
+
+        .selectColor {
+            width: 20px;
+            height: 20px;
+            cursor: pointer;
+            border: 2px solid black;
+            display: inline-block;
+        }
+    </style>
+</head>
+<body>
+    <script>
+        var socket = io();
+        /** @type {CanvasRenderingContext2D} */
+        var ctx = null;
+        /** @type {CanvasRenderingContext2D} */
+        var ctxOverlay = null;
+
+        var mousePos = [0,0];
+        var mouseDown = false;
+        var drawingSize = 5;
+        var selectedColor = "#000000";
+
+        var unsentDots = [];
+
+        window.addEventListener("mousemove", (ev) => {
+            if(mouseDown) {
+                unsentDots.push([...mousePos, drawingSize, selectedColor]);
+            }
+
+            mousePos = [ev.pageX, ev.pageY];
+            socket.emit("new pos", [ev.pageX, ev.pageY]);
+        });
+
+        window.addEventListener("wheel", (ev) => {
+            drawingSize += -(ev.deltaY/500);
+            drawingSize = Math.max(1, Math.min(50, drawingSize));
+
+            drawOverlay();
+        })
+
+        window.addEventListener("mousedown", (ev) => {
+            if(ev.button == 0) mouseDown = true;
+        });
+
+        window.addEventListener("contextmenu", (ev) => {
+            ev.preventDefault();
+            var cm = document.getElementById("cm");
+        });
+
+        window.addEventListener("mouseup", (ev) => {
+            if(ev.button == 0) mouseDown = false;
+        });
+
+        window.addEventListener("keypress", (ev) => {
+            if(ev.key == "c") {
+                var cmd = prompt("command?");
+
+                if(cmd == "clear") {
+                    socket.emit("command clear");
+                }else if(cmd == "color" || cmd == "clr" || cmd == "c") {
+                    var win = window.open("about:blank", "_blank", "width=200,height=60,menubar=no,status=no,left=" + mousePos[0] + ",top=" + mousePos[1]);
+
+                    win.document.body.innerHTML = `
+                        Select a color:
+                        <input type="color" id="colorInput" value="` + selectedColor + `" onchange="window.opener.selectedColor = document.getElementById('colorInput').value; window.close();">
+                        <input type="text" id="colorInputTxt" value="">
+                    `;
+
+                    var scriptTag = win.document.createElement("script");
+                    scriptTag.innerHTML = `window.addEventListener("keypress", (ev) => {
+                                document.getElementById("colorInputTxt").focus();
+                                if(ev.key == "Enter") {
+                                    window.opener.selectedColor = document.getElementById('colorInputTxt').value;
+                                    window.close();
+                                }
+                            });`;
+                    win.document.body.appendChild(scriptTag);
+                }else if(cmd == "size" || cmd == "s") {
+                    var size = prompt("size?");
+                    drawingSize = Math.max(1, Math.min(50, parseFloat(size)));
+                    drawOverlay();
+                }else if(cmd.split(" ")[0] == "login") {
+                    socket.emit("command login", cmd.split(" ")[1]);
+                }
+            }
+        });
+
+        window.addEventListener("message", (ev) => {
+            if(ev.data.split(" ").startsWith("color")) {
+                selectedColor = ev.data.split(" ")[1];
+            }
+        });
+
+        setInterval(() => {
+            socket.emit("draw", {dots: unsentDots});
+            unsentDots = [];
+        }, 50);
+
+        socket.on("mice pos", (data) => {
+            document.getElementById(data[0]).style.left = data[1];
+            document.getElementById(data[0]).style.top = data[2];
+        });
+
+        socket.on("show draw", (data) => {
+            data.dots.forEach((dot) => {
+                ctx.fillStyle = dot[3];
+                ctx.fillRect(dot[0], dot[1], dot[2], dot[2]);
+            });
+        });
+
+        socket.on("add mice", (data) => {
+            var img = document.createElement("img");
+            img.src = "cursor.png";
+            img.style.position = "absolute";
+            img.draggable = false;
+            img.id = data;
+
+
+
+            document.body.appendChild(img);
+        });
+
+        socket.on("change color", (data) => {
+            document.getElementById(data[0]).style.color 
+        });
+
+        socket.on("do clear", () => {
+            ctx.clearRect(0, 0, document.getElementById("cv").getAttribute("width"), document.getElementById("cv").getAttribute("height"));
+        })
+
+        socket.on("remove mice", (data) => {
+            console.log(data);
+            document.getElementById(data).remove();
+        });
+
+        window.addEventListener("load", () => {
+            ctxOverlay = document.getElementById("overlay").getContext("2d");
+            document.getElementById("overlay").setAttribute("width", document.getElementById("overlay").clientWidth);
+            document.getElementById("overlay").setAttribute("height", document.getElementById("overlay").clientHeight);
+
+            ctx = document.getElementById("cv").getContext("2d");
+            document.getElementById("cv").setAttribute("width", document.getElementById("cv").clientWidth);
+            document.getElementById("cv").setAttribute("height", document.getElementById("cv").clientHeight);
+
+            drawOverlay();
+        })
+
+        function ctxOverlayClear(){
+            ctxOverlay.fillStyle = "#ffffffff";
+            ctxOverlay.clearRect(0, 0, document.getElementById("overlay").getAttribute("width"), document.getElementById("overlay").getAttribute("height"));
+        }
+
+        function drawOverlay() {
+            ctxOverlayClear();
+            drawOverlayLines(["Drawing size: " + drawingSize.toLocaleString("en", {useGrouping: false, maximumFractionDigits: 1})]);
+        }
+
+        function drawOverlayLines(lines) {
+            ctxOverlay.fillStyle = "black";
+            ctxOverlay.font = "24px Arial";
+
+            lines.forEach((line, idx) => {
+                var width = ctxOverlay.measureText(line).width;
+                ctxOverlay.fillText(line, (document.getElementById("overlay").getAttribute("width") - width)/2, 30 + (30 * idx));
+            });
+        }
+    </script>
+
+    <canvas style="width: 100vw; height: 100vh" id="cv"></canvas>
+    <canvas style="width: 100vw; height: 100vh; position: absolute; top: 0; left: 0; pointer-events: none;" id="overlay"></canvas>
+</body>
